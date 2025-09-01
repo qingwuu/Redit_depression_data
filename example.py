@@ -30,6 +30,10 @@ STOP=set(pd.Series(pd.read_csv(
     StringIO("word\n"+"\n".join([
         #credit:https://gist.github.com/sebleier/554280
         "i","me","my","myself","we","our","ours","ourselves","you","your","yours","yourself","yourselves","he","him","his","himself","she","her","hers","herself","it","its","itself","they","them","their","theirs","themselves","what","which","who","whom","this","that","these","those","am","is","are","was","were","be","been","being","have","has","had","having","do","does","did","doing","a","an","the","and","but","if","or","because","as","until","while","of","at","by","for","with","about","against","between","into","through","during","before","after","above","below","to","from","up","down","in","out","on","off","over","under","again","further","then","once","here","there","when","where","why","how","all","any","both","each","few","more","most","other","some","such","no","nor","not","only","own","same","so","than","too","very","s","t","can","will","just","don","should","now"
+        #some words that are in top20 but i think those were not helpful to research purpose so add them into stop words
+        ,"like","want","get","things","even","really","one","would","much","going","things"
+        ,"feel","know","never","day","years","anything","always","back","make","still","everything","something"
+        ,"could","way","every","got","anyone"
     ]#python list,contains frequently stop words
     )#把这个list拼成一个CSV格式的字符串。第一行是title ”word",后面每一行一个单词
     )#把string包装成object文件对象，让pd.read_csv(...)直接从内存中的字符串读取
