@@ -14,14 +14,12 @@ from io import StringIO
 
 
 CSV_PATH="depression-sampled.csv"
-OUTDIR=Path("out")
+OUTDIR=Path("chang_shen_result")
 #mkdie(exit_ok=True):如果文件夹已经存在就别报错，直接继续（很常用的防御性写法）
 OUTDIR.mkdir(exist_ok=True)
 
 
 CHUNK_SIZE=100000
-#正则表达式
-#{3,}：由3个或以上英文字母组成的词
 TOKEN_RE=re.compile(r"\b[a-zA-Z]{3,}\b")
 
 
@@ -40,7 +38,7 @@ STOP=set(pd.Series(pd.read_csv(
 # STOP={"i","me","my","myself","we","our","ours","ourselves","you","your","yours","yourself","yourselves","he","him","his","himself","she","her","hers","herself","it","its","itself","they","them","their","theirs","themselves","what","which","who","whom","this","that","these","those","am","is","are","was","were","be","been","being","have","has","had","having","do","does","did","doing","a","an","the","and","but","if","or","because","as","until","while","of","at","by","for","with","about","against","between","into","through","during","before","after","above","below","to","from","up","down","in","out","on","off","over","under","again","further","then","once","here","there","when","where","why","how","all","any","both","each","few","more","most","other","some","such","no","nor","not","only","own","same","so","than","too","very","s","t","can","will","just","don","should","now"}
 
 
-def tokenize(text:str):
+def tokenize(text):
     #如果text不是string/是空string，直接返回空列表
     if not isinstance(text,str) or not text:
         return []
@@ -65,19 +63,27 @@ word_counts=Counter()
 HIST_BIN=50
 hist_bins=defaultdict(int)
 
-
+#MAIN
 for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
     for c in ["author","created_utc",'selftext']:
         if c not in chunk.columns:
-            #有些数据chunk可能缺columns，如果缺就不一行空字符串
             chunk[c]=""
 
     st=chunk["selftext"].fillna("")
+    for txt in st:
+        for t in tokenize(txt):
+            word_counts[t]+=1
+    authors.update(chunk["author"].fillna("[unknown]").str.lower().tolist())
+    
     words_per_row=st.str.split().map(len).astype(int)
     chars_per_row=st.str.len().astype(int)
+    for wc in words_per_row:
+        bin_id=(wc//HIST_BIN)*HIST_BIN
+        hist_bins[bin_id]+=1
+
 
     total_rows+=len(chunk)
-    authors.update(chunk["author"].fillna("[unknown]").str.lower().tolist())
+    
     sum_words+=int(words_per_row.sum())
     sum_chars+=int(chars_per_row.sum())
 
@@ -95,14 +101,6 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
         date_min=dmin if date_min is None or dmin<date_min else date_min
         date_max=dmax if date_max is None or dmax>date_max else date_max
         month_counts.update(dt.dt.to_period("M").astype(str).value_counts().to_dict())
-
-    for txt in st:
-        for t in tokenize(txt):
-            word_counts[t]+=1
-
-    for wc in words_per_row:
-        bin_id=(wc//HIST_BIN)*HIST_BIN
-        hist_bins[bin_id]+=1
 
     avg_words=(sum_words/total_rows) if total_rows else 0.0
     avg_chars=(sum_chars/total_rows) if total_rows else 0.0
@@ -157,6 +155,3 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
         plt.close()
 
     print("done, dir:",OUTDIR.resolve())
-
-
-

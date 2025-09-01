@@ -1,0 +1,2 @@
+total_posts,unique_authors,avg_words_per_post,avg_chars_per_post,date_min_utc,date_max_utc
+30000,24725,153.35,794.68,2019-07-28 01:33:34+00:00,2020-11-24 02:30:46+00:00
