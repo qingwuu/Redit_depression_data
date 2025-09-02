@@ -68,6 +68,11 @@ word_counts=Counter()
 HIST_BIN=50
 hist_bins=defaultdict(int)
 
+#EXTRA:TF-IDF,突出相对独特的词
+_rng=random.Random(42)
+sample_texts=[]
+seen=0
+
 #MAIN
 for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
     for c in ["author","created_utc","selftext","title"]:
@@ -75,8 +80,7 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
             chunk[c]=""
 
     #EXTRA:有可能有些有用信息在title里面，把title也添加到分析文本中
-    complete_text=(chunk["title"].fillna("")+" "+chunk["selftext"].fillna("")).astype(str)
-    st=complete_text
+    st=(chunk["title"].fillna("")+" "+chunk["selftext"].fillna("")).astype(str)
 
     for txt in st:
         for t in tokenize(txt):
@@ -93,7 +97,7 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
         hist_bins[bin_id]+=1
 
 
-    total_rows+=len(chunk)
+    total_rows+=len(st)
     
     sum_words+=int(words_per_row.sum())
     sum_chars+=int(chars_per_row.sum())
@@ -106,8 +110,6 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
     if need_fallback.any():
         dt.loc[need_fallback]=pd.to_datetime(cu[need_fallback],utc=True,errors="coerce")
 
-    #EXTRA:date in minneapolis time!
-    dt_mn=dt.dt.tz_convert("America/Chicago")
     
     if dt.notna().any():
         dmin=dt.min()
@@ -115,33 +117,13 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
         date_min=dmin if date_min is None or dmin<date_min else date_min
         date_max=dmax if date_max is None or dmax>date_max else date_max
         month_counts.update(dt.dt.to_period("M").astype(str).value_counts().to_dict())
-        #Extra:MN local time
+        #EXTRA:date in minneapolis time!
+        dt_mn=dt.dt.tz_convert("America/Chicago")
         month_mn=dt_mn.dt.to_period("M").astype(str).value_counts().to_dict()
         month_counts_mn.update(month_mn)
 
-    avg_words=(sum_words/total_rows) if total_rows else 0.0
-    avg_chars=(sum_chars/total_rows) if total_rows else 0.0
-
-    metrics=pd.DataFrame([{
-        "total_posts":total_rows,
-        "unique_authors":len(authors),
-        "avg_words_per_post":round(avg_words,2),
-        "avg_chars_per_post":round(avg_chars,2),
-        "date_min_utc":("" if date_min is None else str(date_min)),
-        "date_max_utc":("" if date_max is None else str(date_max))
-    }])
-    metrics.to_csv(OUTDIR/"metrics_summary.csv",index=False)
-
-    top20=pd.DataFrame(word_counts.most_common(20),columns=["word","frequency"])
-    top20.to_csv(OUTDIR/"top_20_words.csv",index=False)
-
-
-
 
     #EXTRA:TF-IDF,突出相对独特的词
-    _rng=random.Random(42)
-    sample_texts=[]
-    seen=0
     for txt in st:
         if not txt:
             continue
@@ -152,7 +134,7 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
             j=_rng.randint(1,seen)
             if j<=10000:
                 sample_texts[j-1]=txt
-
+if sample_texts:
     vec=TfidfVectorizer(stop_words="english",token_pattern=r"(?u)\b[a-zA-Z]{3,}\b",max_features=20000)
     X=vec.fit_transform(sample_texts)
     scores=X.sum(axis=0).A1
@@ -161,6 +143,14 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
     tfidf_top20=pd.DataFrame({"word":terms[idx],"tfidf_score":scores[idx]})
     tfidf_top20.to_csv(OUTDIR/"tfidf_top20.csv",index=False)
 
+
+avg_words=(sum_words/total_rows) if total_rows else 0.0
+avg_chars=(sum_chars/total_rows) if total_rows else 0.0
+
+
+
+top20=pd.DataFrame(word_counts.most_common(20),columns=["word","frequency"])
+top20.to_csv(OUTDIR/"top_20_words.csv",index=False)
 
 #EXTRA：指标更稳健：加入中位数、分位数、极端值裁剪
 def approx_quantile_from_hist(hist:dict,binw:int,q:float)->float:
@@ -178,8 +168,17 @@ def approx_quantile_from_hist(hist:dict,binw:int,q:float)->float:
 median_words=approx_quantile_from_hist(hist_bins,HIST_BIN,0.5)
 p90_words=approx_quantile_from_hist(hist_bins,HIST_BIN,0.9)
 
-
-
+metrics=pd.DataFrame([{
+    "total_posts":total_rows,
+    "unique_authors":len(authors),
+    "avg_words_per_post":round(avg_words,2),
+    "avg_chars_per_post":round(avg_chars,2),
+    "date_min_utc":("" if date_min is None else str(date_min)),
+    "date_max_utc":("" if date_max is None else str(date_max)),
+    "median_words_per_post":round(median_words,2),
+    "p90_words_per_post":round(p90_words,2),
+}])
+metrics.to_csv(OUTDIR/"metrics_summary.csv",index=False)
 
 if month_counts:
     mc=pd.Series(month_counts).sort_index()
@@ -192,14 +191,16 @@ if month_counts:
     plt.savefig(OUTDIR/"posts_per_month.png")
     plt.close()
 
-    
-
-    
-#EXTRA:用pandas.cut生成箱
-bins=list(range(0,int(words_per_row.max())+51,50))
-cats=pd.cut(words_per_row,bins=bins,right=False)
-hist_counts=cats.value_counts().sort_index()
-
+if month_counts_mn:
+    mc_mn = pd.Series(month_counts_mn).sort_index()
+    plt.figure()
+    mc_mn.plot(kind="line", marker="o")
+    plt.title("post per month (America/Chicago)")
+    plt.xlabel("month")
+    plt.ylabel("posts")
+    plt.tight_layout()
+    plt.savefig(OUTDIR/"posts_per_month_mn.png")
+    plt.close()
 
 if hist_bins:
     hb=pd.Series(hist_bins).sort_index()
@@ -224,4 +225,12 @@ if not top20.empty:
     plt.savefig(OUTDIR/"top20_words.png")
     plt.close()
 
-print("done, dir:",OUTDIR.resolve())
+    
+# #EXTRA:用pandas.cut生成箱
+# bins=list(range(0,int(words_per_row.max())+51,50))
+# cats=pd.cut(words_per_row,bins=bins,right=False)
+# hist_counts=cats.value_counts().sort_index()
+
+
+
+print("DONE!!!, dir:",OUTDIR.resolve())
