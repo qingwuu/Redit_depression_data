@@ -74,7 +74,7 @@ sample_texts=[]
 seen=0
 
 #EXTRA：自适应bin
-words_smaple_size=20000
+words_sample_size=20000
 words_sample=[]
 _seen_rows_for_sample=0
 _rng_ws=random.Random(123)
@@ -108,12 +108,12 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
     for w in words_per_row:
         _seen_rows_for_sample+=1
         ww=int(w)
-        if len(words_sample)<words_smaple_size:
+        if len(words_sample)<words_sample_size:
             words_sample.append(ww)
         else:
             #在1-_seen_rows_for_sample之间随机取一个整数
             j=_rng_ws.randint(1,_seen_rows_for_sample)
-            if j<=words_smaple_size:
+            if j<=words_sample_size:
                 words_sample[j-1]=ww
 
 
@@ -272,7 +272,7 @@ plt.barh(
 )
 plt.yticks(
     range(len(hist_adapt)),
-    [f"[{int(l)},{int(r)}]" for l,r in zip(hist_adapt["bin_left"],hist_adapt["bin_right"])]
+    [f"[{int(l)},{int(r)})" for l,r in zip(hist_adapt["bin_left"],hist_adapt["bin_right"])]
 )
 plt.title("word count distribution (adaptive equal-width bins)")
 plt.xlabel("posts")
