@@ -202,6 +202,14 @@ if month_counts_mn:
     plt.savefig(OUTDIR/"posts_per_month_mn.png")
     plt.close()
 
+    
+# #EXTRA:用pandas.cut生成箱
+bin_edges=np.histogram_bin_edges(words_per_row.values,bins="auto")
+bin_edges[-1]=max(bin_edges[-1],words_per_row.max()+1e-9)
+cats=pd.qcut(words_per_row,q=20,duplicates="drop")
+hist_counts=cats.value_counts().sort_index()
+
+
 if hist_bins:
     hb=pd.Series(hist_bins).sort_index()
     plt.figure()
@@ -224,12 +232,6 @@ if not top20.empty:
     plt.tight_layout()
     plt.savefig(OUTDIR/"top20_words.png")
     plt.close()
-
-    
-# #EXTRA:用pandas.cut生成箱
-# bins=list(range(0,int(words_per_row.max())+51,50))
-# cats=pd.cut(words_per_row,bins=bins,right=False)
-# hist_counts=cats.value_counts().sort_index()
 
 
 
