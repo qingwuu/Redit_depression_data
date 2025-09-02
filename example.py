@@ -73,6 +73,14 @@ _rng=random.Random(42)
 sample_texts=[]
 seen=0
 
+#EXTRA：自适应bin
+words_smaple_size=20000
+words_sample=[]
+_seen_rows_for_sample=0
+_rng_ws=random.Random(123)
+
+
+
 #MAIN
 for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
     for c in ["author","created_utc","selftext","title"]:
@@ -95,6 +103,18 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
     for wc in words_per_row:
         bin_id=(wc//HIST_BIN)*HIST_BIN
         hist_bins[bin_id]+=1
+    
+    #EXTRA:自适应bin
+    for w in words_per_row:
+        _seen_rows_for_sample+=1
+        ww=int(w)
+        if len(words_sample)<words_smaple_size:
+            words_sample.append(ww)
+        else:
+            #在1-_seen_rows_for_sample之间随机取一个整数
+            j=_rng_ws.randint(1,_seen_rows_for_sample)
+            if j<=words_smaple_size:
+                words_sample[j-1]=ww
 
 
     total_rows+=len(st)
@@ -134,6 +154,8 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
             j=_rng.randint(1,seen)
             if j<=10000:
                 sample_texts[j-1]=txt
+
+#EXTRA:TF-IDF,突出相对独特的词
 if sample_texts:
     vec=TfidfVectorizer(stop_words="english",token_pattern=r"(?u)\b[a-zA-Z]{3,}\b",max_features=20000)
     X=vec.fit_transform(sample_texts)
@@ -202,12 +224,85 @@ if month_counts_mn:
     plt.savefig(OUTDIR/"posts_per_month_mn.png")
     plt.close()
 
+#EXTRA:自适应bin
+#自适应等宽边界（基于样本）
+if words_sample:
+    #把python列表转成numpy数组，并转成float
+    #为什么float：np.histogram_bin_edge在浮点上工作更自然
+    ws=np.array(words_sample,dtype=float)
+    #得到一组等宽边界
+    #bins="auto"是NumPy的自动策略
+    #长尾/偏态分布明显是，可试bins="fd" (Freedman-Diacoins)
+    #bin_edges是长度为k+1得一维数组
+    bin_edges=np.histogram_bin_edges(ws,bins="auto")
+    #因为决定使用左闭右开，所以给最后一个边界加一点点小数保证落进最后一箱
+    bin_edges[-1]=max(bin_edges[-1],ws.max()+1e-9)
+else:
+    bin_edges=np.array([0.0,1.0])
+
+adaptive_bin_counts=np.zeros(len(bin_edges)-1,dtype=np.int64)
+
+for chunk in pd.read_csv(CSV_PATH,chunksize=CHUNK_SIZE,dtype=str):
+    st=(chunk.get("title","").fillna("")+" "+chunk.get("selftext","").fillna("")).astype(str)
+    words_per_row=st.str.split().map(len).fillna(0).astype(int).values
+
+
+    idxs=np.searchsorted(bin_edges,words_per_row,side="right")-1
+    #为了安全起见，把所有下标裁剪到合法范围[0,k+1]
+   # 浮点边界、极端值、数值误差，会让个别索引越界，这里统一兜住
+    idxs=np.clip(idxs,0,len(adaptive_bin_counts)-1)
+    #向量化累加
+    #min_length=：确保返回数组长度至少等于箱子数
+    bincount=np.bincount(idxs,minlength=len(adaptive_bin_counts))
+    adaptive_bin_counts+=bincount
+
+
+hist_adapt=pd.DataFrame({
+    "bin_left":bin_edges[:-1],
+    "bin_right":bin_edges[1:],
+    "count":adaptive_bin_counts
+})
+hist_adapt.to_csv(OUTDIR/"word_count_hist_adaptive.csv",index=False)
+
+plt.figure()
+plt.barh(
+    range(len(hist_adapt)),
+    hist_adapt["count"].values.astype(int),
+    height=0.9
+)
+plt.yticks(
+    range(len(hist_adapt)),
+    [f"[{int(l)},{int(r)}]" for l,r in zip(hist_adapt["bin_left"],hist_adapt["bin_right"])]
+)
+plt.title("word count distribution (adaptive equal-width bins)")
+plt.xlabel("posts")
+plt.tight_layout()
+plt.savefig(OUTDIR/"word_count_hist_adaptive.png")
+plt.close()
+
+
+# 复杂度&资源占用：
+# 内存：常数级（样本上限m+len(bin_edges)的技术数组）
+# 稳定性：bin大多数及时到几百（由规则自动决定），计数数组很小
+
+# 注意事项：
+# 边界右端点：如果用right=False（左闭右开），需要把bin_edges[-1]稍微泰国一点点，确保最大值进最后一箱
+
+
+
+
     
 # #EXTRA:用pandas.cut生成箱
-bin_edges=np.histogram_bin_edges(words_per_row.values,bins="auto")
-bin_edges[-1]=max(bin_edges[-1],words_per_row.max()+1e-9)
-cats=pd.qcut(words_per_row,q=20,duplicates="drop")
-hist_counts=cats.value_counts().sort_index()
+#这里有一个很重要的错误：在for 循环外使用了words_per_row,但是此时它只包含最后一个chunk的数据，导致qcut不是基于全量数据
+#修改方案：
+# 第一遍读：低内存扫一遍，知错摘要，对words+per_rows做叙事u吃采样，用样本估计合适的等宽bin边界
+# 第二编读：用固定好的边界对全量数据技术，得到真正的全量自适应等宽直方图
+
+#原本错误：
+# bin_edges=np.histogram_bin_edges(words_per_row.values,bins="auto")
+# bin_edges[-1]=max(bin_edges[-1],words_per_row.max()+1e-9)
+# cats=pd.qcut(words_per_row,q=20,duplicates="drop")
+# hist_counts=cats.value_counts().sort_index()
 
 
 if hist_bins:
