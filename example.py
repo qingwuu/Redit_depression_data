@@ -95,7 +95,7 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
             word_counts[t]+=1
 
     #EXTRA:过滤无效作者
-    ignore_authors={"automoderator","[deleted]","[unknown]"}
+    ignore_authors={"automoderator","[deleted]"}
     authors.update(chunk["author"].fillna("[unknown]").str.lower().pipe(lambda s:s[~s.isin(ignore_authors)]).tolist())
     
     words_per_row=st.str.split().map(len).fillna(0).astype(int)
@@ -157,7 +157,7 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
 
 #EXTRA:TF-IDF,突出相对独特的词
 if sample_texts:
-    vec=TfidfVectorizer(stop_words="english",token_pattern=r"(?u)\b[a-zA-Z]{3,}\b",max_features=20000)
+    vec=TfidfVectorizer(stop_words=STOP,token_pattern=r"(?u)\b[a-zA-Z]{3,}\b",max_features=20000)
     X=vec.fit_transform(sample_texts)
     scores=X.sum(axis=0).A1
     terms=vec.get_feature_names_out()
