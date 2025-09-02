@@ -3,15 +3,14 @@
 
 from collections import defaultdict
 from pathlib import Path
-from pydoc import resolve
+import random
 import re
-from tkinter import OUTSIDE
 import numpy as np
 import pandas as pd
 from collections import Counter
 import matplotlib.pyplot as plt
 from io import StringIO
-
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 CSV_PATH="depression-sampled.csv"
 OUTDIR=Path("chang_shen_result")
@@ -51,7 +50,6 @@ def tokenize(text):
 #列表所有的词都转为小写，不在stop words里的保留
 
 total_rows=0
-total_words=0
 #set:自动去重
 #使用：lowercase，【unknown】--->len（author）
 authors=set()
@@ -61,6 +59,9 @@ date_min=None
 date_max=None
 #Counter:Counter是计数器字典
 month_counts=Counter()
+
+#EXTRA:MN local time
+month_counts_mn=Counter()
 word_counts=Counter()
 
 #TOKEN_RE.findall(text)#TOKEN_RE.findall(text)
@@ -69,18 +70,24 @@ hist_bins=defaultdict(int)
 
 #MAIN
 for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
-    for c in ["author","created_utc",'selftext']:
+    for c in ["author","created_utc","selftext","title"]:
         if c not in chunk.columns:
             chunk[c]=""
 
-    st=chunk["selftext"].fillna("")
+    #EXTRA:有可能有些有用信息在title里面，把title也添加到分析文本中
+    complete_text=(chunk["title"].fillna("")+" "+chunk["selftext"].fillna("")).astype(str)
+    st=complete_text
+
     for txt in st:
         for t in tokenize(txt):
             word_counts[t]+=1
-    authors.update(chunk["author"].fillna("[unknown]").str.lower().tolist())
+
+    #EXTRA:过滤无效作者
+    ignore_authors={"automoderator","[deleted]","[unknown]"}
+    authors.update(chunk["author"].fillna("[unknown]").str.lower().pipe(lambda s:s[~s.isin(ignore_authors)]).tolist())
     
-    words_per_row=st.str.split().map(len).astype(int)
-    chars_per_row=st.str.len().astype(int)
+    words_per_row=st.str.split().map(len).fillna(0).astype(int)
+    chars_per_row=st.str.len().fillna(0).astype(int)
     for wc in words_per_row:
         bin_id=(wc//HIST_BIN)*HIST_BIN
         hist_bins[bin_id]+=1
@@ -93,18 +100,24 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
 
 
     cu=chunk["created_utc"].fillna("")
-    dt_epoch=pd.to_numeric(cu,errors="coerce")
-    dt=pd.to_datetime(dt_epoch,unit="s",utc=True,errors="coerce")
+    dt_utc=pd.to_numeric(cu,errors="coerce")
+    dt=pd.to_datetime(dt_utc,unit="s",utc=True,errors="coerce")
     need_fallback=dt.isna()
     if need_fallback.any():
         dt.loc[need_fallback]=pd.to_datetime(cu[need_fallback],utc=True,errors="coerce")
 
+    #EXTRA:date in minneapolis time!
+    dt_mn=dt.dt.tz_convert("America/Chicago")
+    
     if dt.notna().any():
         dmin=dt.min()
         dmax=dt.max()
         date_min=dmin if date_min is None or dmin<date_min else date_min
         date_max=dmax if date_max is None or dmax>date_max else date_max
         month_counts.update(dt.dt.to_period("M").astype(str).value_counts().to_dict())
+        #Extra:MN local time
+        month_mn=dt_mn.dt.to_period("M").astype(str).value_counts().to_dict()
+        month_counts_mn.update(month_mn)
 
     avg_words=(sum_words/total_rows) if total_rows else 0.0
     avg_chars=(sum_chars/total_rows) if total_rows else 0.0
@@ -124,38 +137,91 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
 
 
 
-    if month_counts:
-        mc=pd.Series(month_counts).sort_index()
-        plt.figure()
-        mc.plot(kind="line",marker="o")
-        plt.title("post per month (UTC)")
-        plt.xlabel("month")
-        plt.ylabel("posts")
-        plt.tight_layout()
-        plt.savefig(OUTDIR/"posts_per_month.png")
-        plt.close()
 
-    if hist_bins:
-        hb=pd.Series(hist_bins).sort_index()
-        plt.figure()
-        plt.bar(hb.index.astype(int),hb.values.astype(int),width=HIST_BIN*0.9)
-        plt.title("word count distribution")
-        plt.xlabel(f"word count (bin={HIST_BIN})")
-        plt.ylabel("posts")
-        plt.tight_layout()
-        plt.savefig(OUTDIR/"word_count_hist.png")
-        plt.close()
+    #EXTRA:TF-IDF,突出相对独特的词
+    _rng=random.Random(42)
+    sample_texts=[]
+    seen=0
+    for txt in st:
+        if not txt:
+            continue
+        seen+=1
+        if len(sample_texts)<10000:
+            sample_texts.append(txt)
+        else:
+            j=_rng.randint(1,seen)
+            if j<=10000:
+                sample_texts[j-1]=txt
 
-    if not top20.empty:
-        plt.figure()
-        idx=np.arange(len(top20))
-        plt.bar(idx,top20["frequency"].values.astype(int))
-        plt.xticks(idx,top20["word"].tolist(),rotation=75)
-        plt.title("top 20 words")
-        plt.xlabel("word")
-        plt.ylabel("frequency")
-        plt.tight_layout()
-        plt.savefig(OUTDIR/"top20_words.png")
-        plt.close()
+    vec=TfidfVectorizer(stop_words="english",token_pattern=r"(?u)\b[a-zA-Z]{3,}\b",max_features=20000)
+    X=vec.fit_transform(sample_texts)
+    scores=X.sum(axis=0).A1
+    terms=vec.get_feature_names_out()
+    idx=scores.argsort()[::-1][:20]
+    tfidf_top20=pd.DataFrame({"word":terms[idx],"tfidf_score":scores[idx]})
+    tfidf_top20.to_csv(OUTDIR/"tfidf_top20.csv",index=False)
 
-    print("done, dir:",OUTDIR.resolve())
+
+#EXTRA：指标更稳健：加入中位数、分位数、极端值裁剪
+def approx_quantile_from_hist(hist:dict,binw:int,q:float)->float:
+    if not hist:
+        return 0.0
+    total=sum(hist.values())
+    target=total*q
+    acc=0
+    for start in sorted(hist.keys()):
+        acc+=hist[start]
+        if acc>=target:
+            return start+binw/2.0
+    last=max(hist.keys())
+    return last+binw/2.0
+median_words=approx_quantile_from_hist(hist_bins,HIST_BIN,0.5)
+p90_words=approx_quantile_from_hist(hist_bins,HIST_BIN,0.9)
+
+
+
+
+if month_counts:
+    mc=pd.Series(month_counts).sort_index()
+    plt.figure()
+    mc.plot(kind="line",marker="o")
+    plt.title("post per month (UTC)")
+    plt.xlabel("month")
+    plt.ylabel("posts")
+    plt.tight_layout()
+    plt.savefig(OUTDIR/"posts_per_month.png")
+    plt.close()
+
+    
+
+    
+#EXTRA:用pandas.cut生成箱
+bins=list(range(0,int(words_per_row.max())+51,50))
+cats=pd.cut(words_per_row,bins=bins,right=False)
+hist_counts=cats.value_counts().sort_index()
+
+
+if hist_bins:
+    hb=pd.Series(hist_bins).sort_index()
+    plt.figure()
+    plt.bar(hb.index.astype(int),hb.values.astype(int),width=HIST_BIN*0.9)
+    plt.title("word count distribution")
+    plt.xlabel(f"word count (bin={HIST_BIN})")
+    plt.ylabel("posts")
+    plt.tight_layout()
+    plt.savefig(OUTDIR/"word_count_hist.png")
+    plt.close()
+
+if not top20.empty:
+    plt.figure()
+    idx=np.arange(len(top20))
+    plt.bar(idx,top20["frequency"].values.astype(int))
+    plt.xticks(idx,top20["word"].tolist(),rotation=75)
+    plt.title("top 20 words")
+    plt.xlabel("word")
+    plt.ylabel("frequency")
+    plt.tight_layout()
+    plt.savefig(OUTDIR/"top20_words.png")
+    plt.close()
+
+print("done, dir:",OUTDIR.resolve())
