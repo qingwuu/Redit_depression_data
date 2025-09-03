@@ -14,7 +14,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 CSV_PATH="depression-sampled.csv"
 OUTDIR=Path("chang_shen_result")
-#mkdie(exit_ok=True):如果文件夹已经存在就别报错，直接继续（很常用的防御性写法）
+#mkdie(exit_ok=True):如果文件夹已经存在就别报错，直接继续
 OUTDIR.mkdir(exist_ok=True)
 
 
@@ -157,7 +157,7 @@ for chunk in pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE,dtype=str):
 
 #EXTRA:TF-IDF,突出相对独特的词
 if sample_texts:
-    vec=TfidfVectorizer(stop_words=STOP,token_pattern=r"(?u)\b[a-zA-Z]{3,}\b",max_features=20000)
+    vec=TfidfVectorizer(stop_words=list(STOP),token_pattern=r"(?u)\b[a-zA-Z]{3,}\b",max_features=20000)
     X=vec.fit_transform(sample_texts)
     scores=X.sum(axis=0).A1
     terms=vec.get_feature_names_out()
